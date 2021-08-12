@@ -59,6 +59,7 @@ mutable struct CMAESOpt{T, F, G, CO, TR}
     fmeds::Vector{T} # history of median fitness
     feqls::Vector{T} # history of equal fitness
     # report
+    start_time::Float64
     last_report_time::Float64
     pmap_time::Float64
     grad_time::Float64
@@ -109,7 +110,7 @@ function CMAESOpt(f, g, x0, σ0, lo = -fill(1, size(x0)), hi = fill(1, size(x0))
             x̄, pc, pσ, D, B, BD, C,
             arx, ary, arz, arfitness, arindex,
             xmin, fmin, T[], T[], T[],
-            time(), 0, 0, 0, 0, "CMAES.bson")
+            time(), time(), 0, 0, 0, 0, "CMAES.bson")
 end
 
 function update_candidates!(opt::CMAESOpt)
@@ -289,7 +290,7 @@ end
 
 function minimize(fg, x0, a...; maxfevals = 0, gcitr = false, maxiter = 0, 
                 resume = false, cb = [], seed = nothing, autodiff = false, 
-                saveall = false, lazydecomp = false, equal_best = Inf, ka...)
+                saveall = false, lazydecomp = false, equal_best = Inf, print_interval, maxtime = 300,ka...)
     rng = bcast(MersenneTwister(seed))
     f, g = fg isa Tuple ? fg : autodiff ? (fg, fg') : (fg, zero)
     opt = CMAESOpt(f, g, bcast(x0), a...; rng = rng, ka...)
@@ -300,7 +301,7 @@ function minimize(fg, x0, a...; maxfevals = 0, gcitr = false, maxiter = 0,
     iter = length(opt.fmins)
     fcount = iter * opt.λ
     status = 0
-    while fcount < maxfevals
+    while fcount < maxfevals && ((time() - opt.start_time) < maxtime)
         iter += 1; fcount += opt.λ
         if opt.λ == 1
             update_mean!(opt)
@@ -309,14 +310,16 @@ function minimize(fg, x0, a...; maxfevals = 0, gcitr = false, maxiter = 0,
         end
         update_candidates!(opt)
         update_parameters!(opt, iter, lazydecomp)
-        trace_state(opt, iter, fcount)
+        if (iter % print_interval == 0)
+            trace_state(opt, iter, fcount)
+        end
         gcitr && @everywhere GC.gc(true)
         cb(opt.xmin) == :stop && break
         terminate(opt, equal_best) && (status = 1; break)
         # if terminate(opt, equal_best) opt, iter = restart(opt), 0 end
     end
     xmin = inverse(opt.trans, opt.xmin)
-    return xmin, opt.fmin, status
+    return xmin, opt.fmin, status, opt
 end
 
 function maximize(fg, args...; kws...)
